@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::player::{Player, InteractionIndicator};
 use crate::ui::{ContextMenuEvent, UiState, LogEvent};
 use crate::GameSet;
+use crate::objects::{Light, Door, Solid};
 use crate::inventory::{Inventory, InventoryItem};
 
 pub struct InteractionPlugin;
@@ -22,6 +23,9 @@ impl Plugin for InteractionPlugin {
 pub struct InteractionEvent {
     pub entity: Entity,
     pub action: InteractionAction,
+    // Optional context carried with the selection/execution
+    pub with_item_id: Option<String>,
+    pub detailed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -128,6 +132,8 @@ fn handle_interaction_input(
     mut menu_events: EventWriter<ContextMenuEvent>,
     mut interaction_events: EventWriter<InteractionEvent>,
     ui_state: Res<UiState>,
+    lights: Query<&Light>,
+    doors: Query<&Door>,
 ) {
     // Don't process interaction if menu is already open
     if ui_state.menu_open || ui_state.dialog_open {
@@ -154,13 +160,33 @@ fn handle_interaction_input(
             }
 
             if let Some((entity, interactable)) = best {
-                info!("Interacting with: {} ({} actions)", interactable.name, interactable.actions.len());
-                if interactable.actions.len() == 1 {
-                    interaction_events.write(InteractionEvent { entity, action: interactable.actions[0].clone() });
+                // Build actions dynamically based on current component state (Light, Door)
+                let mut actions = interactable.actions.clone();
+                if let Ok(light) = lights.get(entity) {
+                    // Ensure only the correct toggle option is present
+                    actions.retain(|a| !matches!(a, InteractionAction::TurnOn | InteractionAction::TurnOff));
+                    if light.is_on {
+                        actions.push(InteractionAction::TurnOff);
+                    } else {
+                        actions.push(InteractionAction::TurnOn);
+                    }
+                }
+                if let Ok(door) = doors.get(entity) {
+                    actions.retain(|a| !matches!(a, InteractionAction::Open | InteractionAction::Close));
+                    if door.is_open {
+                        actions.push(InteractionAction::Close);
+                    } else {
+                        actions.push(InteractionAction::Open);
+                    }
+                }
+
+                info!("Interacting with: {} ({} actions)", interactable.name, actions.len());
+                if actions.len() == 1 {
+                    interaction_events.write(InteractionEvent { entity, action: actions[0].clone(), with_item_id: None, detailed: false });
                 } else {
                     menu_events.write(ContextMenuEvent {
                         entity,
-                        actions: interactable.actions.clone(),
+                        actions,
                         object_name: interactable.name.clone(),
                     });
                 }
@@ -175,6 +201,10 @@ fn process_interactions(
     interactables: Query<&Interactable>,
     mut inventory: ResMut<Inventory>,
     mut log_writer: EventWriter<LogEvent>,
+    mut lights: Query<&mut Light>,
+    mut doors: Query<&mut Door>,
+    mut sprites: Query<&mut Sprite>,
+    mut visibilities: Query<&mut Visibility>,
 ) {
     for event in events.read() {
         info!("Processing interaction: {:?}", event.action);
@@ -191,6 +221,7 @@ fn process_interactions(
                 }
                 InteractionAction::Take => {
                     let added = inventory.add_item(InventoryItem {
+                        id: interactable.name.clone(),
                         name: interactable.name.clone(),
                         description: format!("A {} that you picked up.", interactable.name),
                         icon_color: Color::WHITE,
@@ -228,16 +259,111 @@ fn process_interactions(
                     log_writer.write(LogEvent(l3));
                 }
                 InteractionAction::Open => {
-                    let l1 = format!("* You open the {}.", interactable.name);
-                    let l2 = "* It's empty inside.".to_string();
+                    // Doors: require key to open if specified, remove Solid when opened
+                    if let Ok(mut door) = doors.get_mut(event.entity) {
+                        if door.is_open {
+                            let l = format!("* The {} is already open.", interactable.name);
+                            info!("{}", l);
+                            log_writer.write(LogEvent(l));
+                        } else {
+                            let can_open = match &door.required_key_id {
+                                Some(key_id) => inventory.has_item_id(key_id),
+                                None => true,
+                            };
+                            if can_open {
+                                if let Some(key_id) = &door.required_key_id {
+                                    let _ = inventory.take_item_by_id(key_id);
+                                }
+                                door.is_open = true;
+                                commands.entity(event.entity).remove::<Solid>();
+                                if let Ok(mut sprite) = sprites.get_mut(event.entity) {
+                                    sprite.color = Color::srgb(0.6, 0.45, 0.2);
+                                }
+                                if let Ok(mut vis) = visibilities.get_mut(event.entity) {
+                                    *vis = Visibility::Hidden;
+                                }
+                                let l1 = format!("* You open the {}.", interactable.name);
+                                let l2 = match &door.required_key_id {
+                                    Some(_) => "* The lock clicks open.".to_string(),
+                                    None => "* It swings open.".to_string(),
+                                };
+                                info!("{}", l1);
+                                info!("{}", l2);
+                                log_writer.write(LogEvent(l1));
+                                log_writer.write(LogEvent(l2));
+                            } else {
+                                let l1 = format!("* The {} is locked.", interactable.name);
+                                let l2 = "* You need a matching key.".to_string();
+                                info!("{}", l1);
+                                info!("{}", l2);
+                                log_writer.write(LogEvent(l1));
+                                log_writer.write(LogEvent(l2));
+                            }
+                        }
+                    } else {
+                        let l1 = format!("* You open the {}.", interactable.name);
+                        let l2 = "* It's empty inside.".to_string();
+                        info!("{}", l1);
+                        info!("{}", l2);
+                        log_writer.write(LogEvent(l1));
+                        log_writer.write(LogEvent(l2));
+                    }
+                }
+                InteractionAction::TurnOn => {
+                    let mut already_on = false;
+                    if let Ok(mut light) = lights.get_mut(event.entity) {
+                        already_on = light.is_on;
+                        light.is_on = true;
+                    }
+                    if let Ok(mut sprite) = sprites.get_mut(event.entity) {
+                        sprite.color = Color::srgb(1.0, 0.9, 0.3);
+                    }
+                    let l1 = format!("* You flip the switch on the {}.", interactable.name);
+                    let l2 = if already_on { "* It's already on.".to_string() } else { "* It hums to life.".to_string() };
                     info!("{}", l1);
                     info!("{}", l2);
                     log_writer.write(LogEvent(l1));
                     log_writer.write(LogEvent(l2));
                 }
-                InteractionAction::TurnOn => {
+                InteractionAction::Close => {
+                    if let Ok(mut door) = doors.get_mut(event.entity) {
+                        if !door.is_open {
+                            let l = format!("* The {} is already closed.", interactable.name);
+                            info!("{}", l);
+                            log_writer.write(LogEvent(l));
+                        } else {
+                            door.is_open = false;
+                            commands.entity(event.entity).insert(Solid);
+                            if let Ok(mut sprite) = sprites.get_mut(event.entity) {
+                                sprite.color = Color::srgb(0.5, 0.35, 0.15);
+                            }
+                            if let Ok(mut vis) = visibilities.get_mut(event.entity) {
+                                *vis = Visibility::Visible;
+                            }
+                            let l1 = format!("* You close the {}.", interactable.name);
+                            let l2 = "* It latches shut.".to_string();
+                            info!("{}", l1);
+                            info!("{}", l2);
+                            log_writer.write(LogEvent(l1));
+                            log_writer.write(LogEvent(l2));
+                        }
+                    } else {
+                        let l = format!("* You close the {}.", interactable.name);
+                        info!("{}", l);
+                        log_writer.write(LogEvent(l));
+                    }
+                }
+                InteractionAction::TurnOff => {
+                    let mut already_off = false;
+                    if let Ok(mut light) = lights.get_mut(event.entity) {
+                        already_off = !light.is_on;
+                        light.is_on = false;
+                    }
+                    if let Ok(mut sprite) = sprites.get_mut(event.entity) {
+                        sprite.color = Color::srgb(0.3, 0.3, 0.3);
+                    }
                     let l1 = format!("* You flip the switch on the {}.", interactable.name);
-                    let l2 = "* It hums to life.".to_string();
+                    let l2 = if already_off { "* It's already off.".to_string() } else { "* It goes dark.".to_string() };
                     info!("{}", l1);
                     info!("{}", l2);
                     log_writer.write(LogEvent(l1));

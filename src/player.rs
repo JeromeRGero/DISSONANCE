@@ -9,6 +9,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(Update, (
                 player_movement,
                 update_player_facing,
+                camera_follow_player,
             ));
     }
 }
@@ -151,6 +152,15 @@ fn player_movement(
                 }
             }
         }
+    }
+}
+fn camera_follow_player(
+    player_query: Query<&Transform, With<Player>>,
+    mut camera_query: Query<&mut Transform, (With<Camera>, Without<Player>)>,
+) {
+    if let (Ok(player_tf), Ok(mut cam_tf)) = (player_query.get_single(), camera_query.get_single_mut()) {
+        cam_tf.translation.x = player_tf.translation.x;
+        cam_tf.translation.y = player_tf.translation.y;
     }
 }
 

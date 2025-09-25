@@ -364,6 +364,8 @@ fn handle_menu_selection(
                 interaction_events.write(InteractionEvent {
                     entity,
                     action: action.clone(),
+                    with_item_id: None,
+                    detailed: false,
                 });
                 
                 // Hide menu

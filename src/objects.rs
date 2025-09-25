@@ -23,6 +23,12 @@ pub struct Light {
     pub is_on: bool,
 }
 
+#[derive(Component)]
+pub struct Door {
+    pub is_open: bool,
+    pub required_key_id: Option<String>,
+}
+
 #[allow(dead_code)]
 #[derive(Component)]
 pub struct Generator {
@@ -43,13 +49,88 @@ pub struct NPC {
 pub struct Solid;
 
 fn spawn_example_objects(mut commands: Commands) {
+    // Hex-like starting room built from axis-aligned segments
+    let wall_thickness = 12.0;
+    let room_half_w = 160.0;
+    let room_half_h = 120.0;
+
+    // Top and bottom walls (slight overlap with verticals to avoid pixel gaps)
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.2, 0.2, 0.25), Vec2::new(room_half_w * 2.0 + wall_thickness, wall_thickness)),
+        Transform::from_xyz(0.0, room_half_h, 0.5),
+        Solid,
+        Name::new("Wall Top"),
+    ));
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.2, 0.2, 0.25), Vec2::new(room_half_w * 2.0 + wall_thickness, wall_thickness)),
+        Transform::from_xyz(0.0, -room_half_h, 0.5),
+        Solid,
+        Name::new("Wall Bottom"),
+    ));
+
+    // Left wall (full height to avoid gaps)
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.2, 0.2, 0.25), Vec2::new(wall_thickness, room_half_h * 2.0)),
+        Transform::from_xyz(-room_half_w, 0.0, 0.5),
+        Solid,
+        Name::new("Wall Left"),
+    ));
+
+    // Right walls with door gap (no gaps at corners)
+    let door_gap_h = 36.0;
+    let right_x = room_half_w;
+    let segment_h = room_half_h - door_gap_h * 0.5;
+    // Upper segment goes from gap to top
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.2, 0.2, 0.25), Vec2::new(wall_thickness, segment_h)),
+        Transform::from_xyz(right_x, door_gap_h * 0.5 + segment_h * 0.5, 0.5),
+        Solid,
+        Name::new("Wall Right Upper"),
+    ));
+    // Lower segment goes from bottom to gap
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.2, 0.2, 0.25), Vec2::new(wall_thickness, segment_h)),
+        Transform::from_xyz(right_x, -door_gap_h * 0.5 - segment_h * 0.5, 0.5),
+        Solid,
+        Name::new("Wall Right Lower"),
+    ));
+
+    // Door in the gap
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.5, 0.35, 0.15), Vec2::new(wall_thickness, door_gap_h)),
+        Transform::from_xyz(right_x, 0.0, 0.6),
+        Interactable { name: "Metal Door".to_string(), actions: vec![InteractionAction::Examine, InteractionAction::Open], interaction_radius: Some(40.0) },
+        Door { is_open: false, required_key_id: Some("Rusty Key".to_string()) },
+        Visibility::Visible,
+        Solid,
+        Name::new("Metal Door"),
+    ));
+
+    // Hallway to the right of the door (overlap door column by 1px to avoid seam)
+    let hall_len = 268.0;
+    let hall_half_w = hall_len / 2.0;
+    let hall_half_h = 30.0;
+    let hall_center_x = right_x + wall_thickness + hall_half_w - 6.0;
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.18, 0.18, 0.22), Vec2::new(hall_len, wall_thickness)),
+        Transform::from_xyz(hall_center_x, hall_half_h, 0.5),
+        Solid,
+        Name::new("Hall Top"),
+    ));
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.18, 0.18, 0.22), Vec2::new(hall_len, wall_thickness)),
+        Transform::from_xyz(hall_center_x, -hall_half_h, 0.5),
+        Solid,
+        Name::new("Hall Bottom"),
+    ));
+
     // Spawn a pickupable key
     commands.spawn((
         Sprite::from_color(
             Color::srgb(0.8, 0.7, 0.3), // Gold color
             Vec2::new(12.0, 12.0)
         ),
-        Transform::from_xyz(-100.0, 0.0, 1.0),
+        Transform::from_xyz(-80.0, 10.0, 1.0),
         Interactable {
             name: "Rusty Key".to_string(),
             actions: vec![
@@ -72,7 +153,7 @@ fn spawn_example_objects(mut commands: Commands) {
             Color::srgb(0.3, 0.3, 0.3), // Dark gray (off)
             Vec2::new(20.0, 28.0)
         ),
-        Transform::from_xyz(100.0, 50.0, 1.0),
+        Transform::from_xyz(60.0, 40.0, 1.0),
         Interactable {
             name: "Old Lamp".to_string(),
             actions: vec![
@@ -92,7 +173,8 @@ fn spawn_example_objects(mut commands: Commands) {
             Color::srgb(0.4, 0.4, 0.5), // Blue-gray
             Vec2::new(48.0, 48.0)  // Large size
         ),
-        Transform::from_xyz(0.0, -120.0, 1.0),
+        // Place so its left edge slightly overlaps the hallway end to avoid gaps
+        Transform::from_xyz(hall_center_x + hall_half_w + 23.0, 0.0, 1.0),
         Interactable {
             name: "Generator".to_string(),
             actions: vec![
@@ -117,7 +199,7 @@ fn spawn_example_objects(mut commands: Commands) {
             Color::srgb(0.6, 0.3, 0.8), // Purple
             Vec2::new(16.0, 20.0)
         ),
-        Transform::from_xyz(60.0, 0.0, 1.0),
+        Transform::from_xyz(20.0, -20.0, 1.0),
         Interactable {
             name: "Strange Figure".to_string(),
             actions: vec![

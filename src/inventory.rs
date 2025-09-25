@@ -48,10 +48,24 @@ impl Inventory {
             None
         }
     }
+
+    pub fn take_item_by_id(&mut self, id: &str) -> bool {
+        if let Some(pos) = self.items.iter().position(|i| i.id == id) {
+            self.items.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn has_item_id(&self, id: &str) -> bool {
+        self.items.iter().any(|i| i.id == id)
+    }
 }
 
 #[derive(Clone)]
 pub struct InventoryItem {
+    pub id: String,
     pub name: String,
     pub description: String,
     pub icon_color: Color,
